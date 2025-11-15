@@ -15,4 +15,4 @@ COPY . /code/
 
 # Render will pass the $PORT variable.
 # The app MUST bind to 0.0.0.0 and use this variable.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "$PORT"]
+CMD /bin/sh -c "uvicorn app:app --host 0.0.0.0 --port $PORT"
