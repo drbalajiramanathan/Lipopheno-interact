@@ -13,10 +13,6 @@ RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 # Copy all other application files (app.py, .onnx, .pkl, etc.)
 COPY . /code/
 
-# Expose the port Hugging Face Spaces expects (Gradio/Streamlit default)
-# For FastAPI, 7860 is standard, but 8000 works if configured. We'll use 7860.
-EXPOSE 7860
-
-# Command to run the FastAPI app with uvicorn
-# It must bind to 0.0.0.0 to be accessible.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
+# Render will pass the $PORT variable.
+# The app MUST bind to 0.0.0.0 and use this variable.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "$PORT"]
