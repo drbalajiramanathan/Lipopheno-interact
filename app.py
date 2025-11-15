@@ -1,0 +1,114 @@
+import uvicorn
+import joblib
+import numpy as np
+import onnxruntime as ort
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+# --- 1. Define Constants and Feature Order ---
+
+# This order MUST match the order used to train the scaler.pkl
+# This hypothesis is based on the PSS (Phase 5) listing.
+FEATURE_COLUMNS = [
+    # Genomic
+    'LDLR_variant', 'APOB_variant', 'PCSK9_variant', 'LPA_variant', 'Polygenic_Score',
+    # Proteomic
+    'hs-CRP', 'Lp-PLA2', 'IL-6', 'MPO',
+    # Lipidomic
+    'LDL-C', 'Lp(a)', 'ApoB', 'TG', 'HDL-C'
+]
+
+# --- 2. Define Pydantic Input Model ---
+# This ensures the API receives all 14 features.
+
+class PatientInput(BaseModel):
+    LDLR_variant: float
+    APOB_variant: float
+    PCSK9_variant: float
+    LPA_variant: float
+    Polygenic_Score: float
+    hs-CRP: float
+    Lp-PLA2: float
+    IL-6: float
+    MPO: float
+    LDL-C: float
+    Lp: float
+    ApoB: float
+    TG: float
+    HDL-C: float
+
+# --- 3. Load Artifacts at Startup ---
+# Load models and data once to be re-used by all requests.
+
+app = FastAPI(title="LipoPheno-Interact API")
+
+try:
+    scaler = joblib.load("scaler.pkl")
+    graph_data = np.load("graph_features.npz")
+    
+    # Extract static graph features
+    # Assuming 'degree' and 'betweenness' are the keys saved in Phase 2
+    DEGREE_FEATURES = graph_data['degree'].astype(np.float32).reshape(1, -1)
+    BETWEENNESS_FEATURES = graph_data['betweenness'].astype(np.float32).reshape(1, -1)
+
+    # Initialize ONNX inference session
+    ort_session = ort.InferenceSession("model.onnx")
+    INPUT_NAME = ort_session.get_inputs()[0].name
+    
+    print("INFO: All model artifacts loaded successfully.")
+
+except FileNotFoundError as e:
+    print(f"ERROR: Missing artifact. {e}")
+    # Handle error appropriately in a real app
+    scaler = None
+    ort_session = None
+
+# --- 4. Define API Endpoints ---
+
+@app.get("/")
+def root():
+    return {"message": "LipoPheno-Interact API is running."}
+
+
+@app.post("/predict")
+def predict_pis(patient_data: PatientInput):
+    """
+    Predicts the Plaque Instability Score (PIS) from 14 patient features.
+    """
+    if not ort_session or not scaler:
+        return {"error": "Model artifacts not loaded."}, 500
+
+    # 1. Create 1D array from Pydantic model in the correct feature order
+    patient_values = np.array([
+        patient_data.dict()[col] for col in FEATURE_COLUMNS
+    ])
+
+    # 2. Scale the 14 patient-specific features
+    # Reshape to (1, 14) for the scaler
+    scaled_patient_values = scaler.transform(patient_values.reshape(1, -1)).astype(np.float32)
+
+    # 3. Create the 42-feature "Graph-Informed" vector
+    # (1, 14) patient features + (1, 14) degree + (1, 14) betweenness
+    full_feature_vector = np.concatenate([
+        scaled_patient_values,
+        DEGREE_FEATURES,
+        BETWEENNESS_FEATURES
+    ], axis=1)
+
+    # 4. Run ONNX Inference
+    ort_inputs = {INPUT_NAME: full_feature_vector}
+    ort_outs = ort_session.run(None, ort_inputs)
+    
+    # Extract the scalar prediction
+    pis_score = float(ort_outs[0][0][0])
+    
+    # PSS specifies a 0-100 score, so we scale the sigmoid output
+    pis_score_100 = round(pis_score * 100, 2)
+
+    return {"plaque_instability_score": pis_score_100}
+
+# --- 5. Run the App (for local testing) ---
+
+if __name__ == "__main__":
+    # Note: Hugging Face will use its own command, not this.
+    uvicorn.run(app, host="0.0.0.0", port=8000)
