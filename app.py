@@ -4,6 +4,7 @@ import numpy as np
 import onnxruntime as ort
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
+from fastapi.middleware.cors import CORSMiddleware # <-- 1. IMPORT THIS
 
 # --- 1. Define Constants and Feature Order ---
 
@@ -44,6 +45,16 @@ class PatientInput(BaseModel):
 # --- 3. Load Artifacts at Startup ---
 # ... (rest of the file is the same as before) ...
 app = FastAPI(title="LipoPheno-Interact API")
+
+# --- 2. ADD THE CORS MIDDLEWARE BLOCK ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allows all origins (good for testing)
+    allow_credentials=True,
+    allow_methods=["*"], # Allows all methods (POST, GET, etc.)
+    allow_headers=["*"],
+)
+# --------------------------------------
 
 try:
     scaler = joblib.load("scaler.pkl")
